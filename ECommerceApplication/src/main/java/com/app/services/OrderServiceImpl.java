@@ -4,6 +4,8 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -124,8 +126,84 @@ public class OrderServiceImpl implements OrderService {
 		});
 
 		OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
-		
+
 		orderItems.forEach(item -> orderDTO.getOrderItems().add(modelMapper.map(item, OrderItemDTO.class)));
+
+		return orderDTO;
+	}
+
+	@Override
+	public OrderDTO placeBankTransferOrder(String email, Long cartId, String bankName) {
+		// 1) Ambil cart
+		Cart cart = cartRepo.findCartByEmailAndCartId(email, cartId);
+		if (cart == null) {
+			throw new ResourceNotFoundException("Cart", "cartId", cartId);
+		}
+
+		// 2) Pastikan cart tidak kosong
+		List<CartItem> cartItems = cart.getCartItems();
+		if (cartItems.isEmpty()) {
+			throw new APIException("Cart is empty");
+		}
+
+		// 3) Daftar bank yang didukung
+		Map<String, String> supportedBanks = new HashMap<>();
+		supportedBanks.put("Bank Mandiri", "123-456-7890");
+		supportedBanks.put("Bank BCA", "987-654-3210");
+		supportedBanks.put("Bank BRI", "111-222-3334");
+
+		// 4) Validasi bankName
+		if (!supportedBanks.containsKey(bankName)) {
+			throw new APIException("Bank tidak didukung: " + bankName);
+		}
+		String storeAccountNumber = supportedBanks.get(bankName);
+
+		// 5) Buat Order
+		Order order = new Order();
+		order.setEmail(email);
+		order.setOrderDate(LocalDate.now());
+		order.setTotalAmount(cart.getTotalPrice());
+		order.setOrderStatus("Order Accepted !");
+
+		// 6) Buat Payment (transfer bank)
+		Payment payment = new Payment();
+		payment.setOrder(order);
+		payment.setPaymentMethod("Transfer Bank");
+		payment.setBankName(bankName);
+		payment.setStoreAccountNumber(storeAccountNumber);
+
+		payment = paymentRepo.save(payment);
+		order.setPayment(payment);
+
+		// Simpan Order
+		Order savedOrder = orderRepo.save(order);
+
+		// 7) Konversi CartItem -> OrderItem
+		List<OrderItem> orderItems = new ArrayList<>();
+		for (CartItem cartItem : cartItems) {
+			OrderItem orderItem = new OrderItem();
+			orderItem.setProduct(cartItem.getProduct());
+			orderItem.setQuantity(cartItem.getQuantity());
+			orderItem.setDiscount(cartItem.getDiscount());
+			orderItem.setOrderedProductPrice(cartItem.getProductPrice());
+			orderItem.setOrder(savedOrder);
+			orderItems.add(orderItem);
+		}
+		orderItems = orderItemRepo.saveAll(orderItems);
+
+		// 8) Hapus CartItem dan update stok produk
+		for (CartItem item : cartItems) {
+			int quantity = item.getQuantity();
+			Product product = item.getProduct();
+			cartService.deleteProductFromCart(cartId, product.getProductId());
+			product.setQuantity(product.getQuantity() - quantity);
+		}
+
+		// 9) Konversi ke DTO
+		OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
+		for (OrderItem item : orderItems) {
+			orderDTO.getOrderItems().add(modelMapper.map(item, OrderItemDTO.class));
+		}
 
 		return orderDTO;
 	}
@@ -170,20 +248,20 @@ public class OrderServiceImpl implements OrderService {
 
 		List<OrderDTO> orderDTOs = orders.stream().map(order -> modelMapper.map(order, OrderDTO.class))
 				.collect(Collectors.toList());
-		
+
 		if (orderDTOs.size() == 0) {
 			throw new APIException("No orders placed yet by the users");
 		}
 
 		OrderResponse orderResponse = new OrderResponse();
-		
+
 		orderResponse.setContent(orderDTOs);
 		orderResponse.setPageNumber(pageOrders.getNumber());
 		orderResponse.setPageSize(pageOrders.getSize());
 		orderResponse.setTotalElements(pageOrders.getTotalElements());
 		orderResponse.setTotalPages(pageOrders.getTotalPages());
 		orderResponse.setLastPage(pageOrders.isLast());
-		
+
 		return orderResponse;
 	}
 
