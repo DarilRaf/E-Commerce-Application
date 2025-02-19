@@ -154,7 +154,7 @@ public class OrderServiceImpl implements OrderService {
 
 		// 4) Validasi bankName
 		if (!supportedBanks.containsKey(bankName)) {
-			throw new APIException("Bank tidak didukung: " + bankName);
+			throw new APIException("Bank tidak didukung, yang tersedia: " + supportedBanks.keySet());
 		}
 		String storeAccountNumber = supportedBanks.get(bankName);
 
